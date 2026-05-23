@@ -1,27 +1,42 @@
-import cv2
-import numpy as np
-from tensorflow.keras.models import load_model
+from joblib import load
+from pose_extraction import extract_pose_features
 
-# Load trained model
-model = load_model("adhd_model.h5")
+svm = load("activity_svm_model.pkl")
+scaler = load("scaler.pkl")
+encoder = load("label_encoder.pkl")
 
-IMG_SIZE = 128
+high_motor_activities = ["running", "cycling", "jumping", "dancing"]
 
 def predict_image(image_path):
-    img = cv2.imread(image_path)
-    img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
-    img = img / 255.0
-    img = np.reshape(img, (1, IMG_SIZE, IMG_SIZE, 3))
+    features = extract_pose_features(image_path)
 
-    prediction = model.predict(img)[0][0]
+    if features is None:
+        return {
+            "result": "Pose not detected ❌",
+            "confidence": 0
+        }
 
-    if prediction >= 0.5:
-        return "ADHD Risk Detected ⚠️"
+    features = scaler.transform([features])
+
+    probs = svm.predict_proba(features)[0]
+    class_id = probs.argmax()
+
+    # ✅ CONVERT numpy float → python float
+    confidence = float(round(probs[class_id] * 100, 2))
+
+    activity = encoder.inverse_transform([class_id])[0]
+
+    if activity.lower() in high_motor_activities:
+        risk = "High Motor Activity (Possible ADHD Risk)"
     else:
-        return "Normal Behavior ✅"
+        risk = "Low Motor Activity"
 
-# TEST IMAGE (change filename)
-test_image_path = "dataset/train/Image_1.jpg"
+    result_text = (
+        f"Detected Activity: {activity}<br>"
+        f"ADHD Risk Indicator: {risk}"
+    )
 
-result = predict_image(test_image_path)
-print("Prediction:", result)
+    return {
+        "result": result_text,
+        "confidence": confidence
+    }
